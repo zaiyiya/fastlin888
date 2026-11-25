@@ -1,0 +1,76 @@
+name: FastLin Android
+
+on:
+  workflow_dispatch:
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.vfs.watch=false
+  SENTRY_BACKEND: none
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+        working-directory: FastLin-1.20.0-src
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Unzip source
+        working-directory: .
+        run: |
+          unzip -q FastLin-1.20.0-android-source.zip
+          ls FastLin-1.20.0-src | head
+
+      - name: Setup Rust (Android targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android NDK
+        run: |
+          NDK_VERSION="28.2.13676358"
+          yes | "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${NDK_VERSION}" >/dev/null 2>&1 || true
+          echo "ANDROID_NDK=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Setup Golang
+        uses: actions/setup-go@v6
+        with:
+          go-version: 1.25.x
+          cache-dependency-path: FastLin-1.20.0-src/core/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          flutter-version: '3.50.1'
+
+      - name: Dependencies and codegen
+        run: |
+          flutter pub get
+          dart run build_runner build
+
+      - name: Type check (report only)
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings || true
+
+      - name: Build FastLin (arm64-v8a)
+        run: dart setup.dart android --arch arm64 --env stable
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: FastLin-android-arm64
+          path: FastLin-1.20.0-src/dist/*.apk
+          if-no-files-found: error
